@@ -1,0 +1,23 @@
+version: '3.7'
+
+services:
+  create_service:
+    build: ./base
+    command: uvicorn base.main:app --host 0.0.0.0 --port 8000 --reload
+    ports:
+      - 8000:8000
+    environment:
+      - DATABASE_URL=postgres://user:password@db:5432/database
+    depends_on:
+      - db
+    volumes:
+      - .:/app
+
+  db:
+    image: postgres:12
+    environment:
+      - POSTGRES_USER=user
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_DB=database
+    ports:
+      - 5432:5432

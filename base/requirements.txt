@@ -1,0 +1,5 @@
+uvicorn
+watchfiles
+
+# psycopg2==2.8.6
+fastapi==0.61.1
