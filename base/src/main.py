@@ -1,21 +1,24 @@
 # import psycopg2
 from fastapi import FastAPI, Response, Path
 from fastapi.responses import RedirectResponse
-
+from typing import Annotated
 from pydantic import BaseModel
 
 # Strategy
-class BaseUniqueHashGenerator:
+class BaseHashGenerator:
+    @staticmethod
     def generate_hash(str: str, prefix: str=""):
         pass
 
-class NaiveHashGenerator(BaseUniqueHashGenerator):
+class NaiveHashGenerator(BaseHashGenerator):
+    @staticmethod
     def generate_hash(str: str, prefix: str=""):
         # simply use the current id, that should be unique
         # TODO optimize ; use bytes
         return prefix + '1'
 
 
+# Defines a schema for the entity
 class BaseEntity:
     table_name: str
     table_keys: str
@@ -29,13 +32,22 @@ class BaseEntity:
                 raise TypeError(f"Property not defined: {property}")
             setattr(self, property, dict[property])
 
+class UrlEntity(BaseEntity):
+    table_name="urls"
+    table_keys="url_keys"
+    table_data="urls_data"
+
+    id: str
+    original_url: str
+
+
 class BaseStore:
     _store_instance = None
 
     def __init__(self):
         self._setup_storage()
 
-    # singleton
+    @classmethod
     def instance(cls):
         if not cls._store_instance:
             cls._store_instance = cls()
@@ -55,13 +67,6 @@ class BaseStore:
         pass
 
 
-class UrlEntity(BaseEntity):
-    table_name="urls"
-    table_keys="url_keys"
-    table_data="urls_data"
-
-    original_url: str
-
 class InMemoryStore(BaseStore):
     # TODO use this abstraction 
     storage: dict
@@ -77,20 +82,24 @@ class InMemoryStore(BaseStore):
     def add(self, entity: BaseEntity) -> None:
         table = self._get_table(type(entity))
 
-        table[entity.table_keys].append(id)
+        table[entity.table_keys].append(entity.id)
         table[entity.table_data][entity.id] = vars(entity)
 
     def get(self, entity_cls: BaseEntity, id: str) -> BaseEntity:
         table = self._get_table(entity_cls)
         return table[entity_cls.table_data][id]
 
-    def last(self, entity_cls: BaseEntity) -> BaseEntity:
+    def last(self, entity_cls: BaseEntity) -> BaseEntity | None:
         table = self._get_table(entity_cls)
-        last_key = table[entity_cls.table_keys][-1]
+        if len(table[entity_cls.table_keys]) == 0:
+            return None
+
+        last_key: int = table[entity_cls.table_keys][-1]
         return table[entity_cls.table_data][last_key]
  
 
     def _setup_storage(self):
+        print("Storage setup")
         # Not the best having things look the same
         self.storage = type(self).schema
 
@@ -99,42 +108,41 @@ class InMemoryStore(BaseStore):
 
 
 class UrlService:
-    def __init__(self, store: BaseStore=InMemoryStore):
+    def __init__(
+            self,
+            store: BaseStore = InMemoryStore.instance(),
+            hash_strategy: BaseHashGenerator = NaiveHashGenerator
+    ):
         self.store = store
-
-    def generate_url_hash(url):
-        # TODO
-        pass
+        self.hash_strategy = hash_strategy
 
     def create(self, original_url: str) -> BaseEntity:
-        # TODO save in db
-        # shorthand
-        hash_strategy = NaiveHashGenerator
+        last: UrlEntity = self.store.last(UrlEntity)
+        last_id: str = last.id if last else ''
 
-        last_id = self.store.last(UrlEntity)
-        id = hash_strategy.generate_hash(original_url, last_id)
+        new_id = self.hash_strategy.generate_hash(original_url, str(last_id))
 
-        entity = UrlEntity(id=id, original_url=original_url)
+        entity = UrlEntity(id=new_id, original_url=original_url)
         self.store.add(entity)
 
         return entity
 
+    # Simple delegator
     def get(self, id: str) -> UrlEntity:
         self.store.get(UrlEntity, id)
 
 app = FastAPI()
 
 class Url(BaseModel):
-    id: str
     original_url: str
 
 
 @app.post("/urls")
 async def create_url(url: Url):
+    # TODO validate
     url_entity = UrlService().create(original_url=url.original_url)
 
-    # TODO Serialize returned url
-    # Naive serializer
+    # TODO use pydantic model instead
     return vars(url_entity)
 
 @app.get("/")
@@ -144,7 +152,8 @@ async def read_root():
 # url_id
 @app.get("/{short_url}")
 async def redirect_url(
-    short_url: str = Path(title="Shorthand for the url")
+    short_url: str = Path(title="Shorthand for the url", default="")
 ):
+    # TODO validate
     url_entity = UrlService().get(id=short_url)
     return RedirectResponse(url_entity.original_url)
