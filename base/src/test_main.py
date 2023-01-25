@@ -15,28 +15,24 @@ client = TestClient(app)
 # add
 # last
 class TestInMemoryStore:
-    # @pytest.fixture
-    # def mock_schema():
-    #     return { "tab": { "tab_ids": [], "tabs_data": {} } }
+    @pytest.fixture(scope="function")
+    def store(self):
+        return InMemoryStore(URL_SCHEMA)
 
-    def test_in_memory_store_add(self):
-        store = InMemoryStore(URL_SCHEMA)
 
-        store.add(UrlEntity(id=1, original_url="some"))
+    class TestAdd:
+        def test_add_should_insert_a_record_properly(self, store):
+            store.add(UrlEntity(id=1, original_url="some"))
 
-        assert store.get_storage() == {'urls': {'url_ids': [1], 'urls_data': {1: {'id': 1, 'original_url': 'some'}}}}
+            assert store.get_storage() == {'urls': {'url_ids': [1], 'urls_data': {1: {'id': 1, 'original_url': 'some'}}}}
 
-    def test_in_memory_store_add_duplicate(self):
-        store = InMemoryStore(URL_SCHEMA)
+        def test_add_should_raise_an_exception_on_duplicate_records(self, store):
+            store.add(UrlEntity(id=1, original_url="some"))
 
-        store.add(UrlEntity(id=1, original_url="some"))
+            with pytest.raises(DuplicateRecordError) as ex:
+                store.add(UrlEntity(id=1, original_url="some1"))
 
-        with pytest.raises(DuplicateRecordError) as ex:
-            store.add(UrlEntity(id=1, original_url="some1"))
-
-    def test_in_memory_store_get_existing(self):
-        store = InMemoryStore(URL_SCHEMA)
-
+    def test_get_should_return_the_correct_record(self, store):
         store.add(UrlEntity(id=1, original_url="some"))
 
         result = store.get(UrlEntity, 1)
@@ -44,9 +40,7 @@ class TestInMemoryStore:
         assert result.original_url == "some"
 
     # TODO parametarize
-    def test_in_memory_store_get_non_existent(self):
-        store = InMemoryStore(URL_SCHEMA)
-
+    def test_get_returns_none_when_record_not_found(self, store):
         assert store.get(UrlEntity, 1) == None
 
     @pytest.mark.skip()
@@ -64,9 +58,8 @@ class TestInMemoryStore:
         # Teardown
         store.flush()
 
-    def test_flush_clears_store(self):
+    def test_flush_clears_the_store(self, store):
         # Given
-        store = InMemoryStore(URL_SCHEMA)
         store.add(UrlEntity(id=1, original_url="some"))
         
         # When
@@ -88,9 +81,14 @@ class TestInMemoryStore:
 
 
 class TestUrlApi:
-    def teardown(self):
+    def teardown_method(self):
         # TODO Abstract/decouple
         InMemoryStore.instance(URL_SCHEMA).flush()
+
+    @pytest.fixture
+    def setup_store(self):
+        store = InMemoryStore.instance(URL_SCHEMA)
+        store.add(UrlEntity(id="1", original_url="https://some.com"))
 
     def test_create_url(self):
         response = client.post(
@@ -100,13 +98,8 @@ class TestUrlApi:
 
         assert response.json() == {"id": "1", "original_url": "some.com"}
 
-
-    @pytest.fixture
-    def mocked_store(self):
-        store = InMemoryStore.instance(URL_SCHEMA)
-        store.add(UrlEntity(id="1", original_url="https://some.com"))
-
-    def test_redirect_url(self, mocked_store):
+    def test_redirect_url(self, setup_store):
         response = client.get(f"/1", allow_redirects=False)
+
         assert response.status_code == status.HTTP_301_MOVED_PERMANENTLY
         assert response.headers["location"] == "https://some.com"

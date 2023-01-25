@@ -114,7 +114,7 @@ class InMemoryStore(BaseStore):
         return entity_cls(**table[entity_cls.table_data][last_key])
  
     def flush(self):
-        self._storage = self._schema
+        self._storage = copy.deepcopy(self._schema)
 
  
     def get_storage(self) -> dict:
