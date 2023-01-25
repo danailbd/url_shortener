@@ -125,8 +125,7 @@ class InMemoryStore(BaseStore):
         # Not the best having things look the same
         self._storage = copy.deepcopy(schema)
 
-    def _get_table(self, entity_cls):
-        return self._storage[entity_cls.table_name]
+    def _get_table(self, entity_cls): return self._storage[entity_cls.table_name]
 
 class UrlService:
     def __init__(
@@ -149,8 +148,8 @@ class UrlService:
         return entity
 
     # Simple delegator
-    def get(self, id: str | int) -> UrlEntity:
-        self.store.get(UrlEntity, id=id)
+    def get(self, id: str) -> UrlEntity | None:
+        return self.store.get(UrlEntity, id=id)
 
 app = FastAPI()
 
@@ -180,11 +179,12 @@ async def redirect_url(
         short_url: str = Path(title="Shorthand for the url", default=""),
         store: BaseStore = Depends(get_db)
 ):
-    # XXX make "str"
-    short_url = int(short_url)
     # TODO validate
     url_entity = UrlService(store).get(id=short_url)
 
     if url_entity:
-        return RedirectResponse(url_entity.original_url)
+        return RedirectResponse(
+            url_entity.original_url,
+            status_code=status.HTTP_301_MOVED_PERMANENTLY
+        )
     return Response(status_code=status.HTTP_404_NOT_FOUND)

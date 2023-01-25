@@ -104,11 +104,9 @@ class TestUrlApi:
     @pytest.fixture
     def mocked_store(self):
         store = InMemoryStore.instance(URL_SCHEMA)
-        store.add(UrlEntity(id=1, original_url="some.com"))
+        store.add(UrlEntity(id="1", original_url="https://some.com"))
 
     def test_redirect_url(self, mocked_store):
-        response = client.get(
-            f"/1"
-        )
-
+        response = client.get(f"/1", allow_redirects=False)
         assert response.status_code == status.HTTP_301_MOVED_PERMANENTLY
+        assert response.headers["location"] == "https://some.com"
