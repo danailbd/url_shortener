@@ -1,7 +1,7 @@
-# import psycopg2
-from fastapi import FastAPI, Response, Path
+import copy
+
+from fastapi import Depends, FastAPI, Response, Path, status
 from fastapi.responses import RedirectResponse
-from typing import Annotated
 from pydantic import BaseModel
 
 # Strategy
@@ -34,30 +34,47 @@ class BaseEntity:
 
 class UrlEntity(BaseEntity):
     table_name="urls"
-    table_keys="url_keys"
+    table_keys="url_ids"
     table_data="urls_data"
 
     id: str
     original_url: str
 
+# ---
+
+URL_SCHEMA = {
+            # Simulate a table hash index-like behavior. Keep a ids lists
+            # so that we can access the last key
+            # <table>: {
+            #          <table>_ids: [],
+            #          <table>_data: {}
+            # }
+            "urls": {
+                "url_ids": [],
+                "urls_data": {}
+            }
+        }
 
 class BaseStore:
     _store_instance = None
+    # TODO move out
+    _schema: dict = {}
 
-    def __init__(self):
-        self._setup_storage()
+    def __init__(self, schema):
+        self._schema = schema
+        self._setup_storage(schema)
 
     @classmethod
-    def instance(cls):
+    def instance(cls, *args):
         if not cls._store_instance:
-            cls._store_instance = cls()
+            cls._store_instance = cls(*args)
 
         return cls._store_instance
 
     def add(self, entity: BaseEntity):
         pass
 
-    def get(self, entity_cls: BaseEntity, id: str):
+    def get(self, entity_cls: BaseEntity, id: str) -> BaseEntity | None:
         pass
 
     def last(self, entity_cls: BaseEntity):
@@ -67,27 +84,26 @@ class BaseStore:
         pass
 
 
+class DuplicateRecordError(Exception):
+    pass
 class InMemoryStore(BaseStore):
     # TODO use this abstraction 
-    storage: dict
-    schema = {
-            # Simulate a table with a hash index, so that we can access
-            # the last key
-            "urls": {
-                "url_keys": [],
-                "urls_data": {}
-            }
-        }
+    _storage: dict
 
     def add(self, entity: BaseEntity) -> None:
         table = self._get_table(type(entity))
 
+        if self.get(entity_cls=type(entity), id=entity.id):
+            raise DuplicateRecordError()
+
         table[entity.table_keys].append(entity.id)
         table[entity.table_data][entity.id] = vars(entity)
 
-    def get(self, entity_cls: BaseEntity, id: str) -> BaseEntity:
+    def get(self, entity_cls: BaseEntity, id: str) -> BaseEntity | None:
         table = self._get_table(entity_cls)
-        return table[entity_cls.table_data][id]
+        if id in table[entity_cls.table_data]:
+            return entity_cls(**table[entity_cls.table_data][id])
+        return None
 
     def last(self, entity_cls: BaseEntity) -> BaseEntity | None:
         table = self._get_table(entity_cls)
@@ -95,22 +111,27 @@ class InMemoryStore(BaseStore):
             return None
 
         last_key: int = table[entity_cls.table_keys][-1]
-        return table[entity_cls.table_data][last_key]
+        return entity_cls(**table[entity_cls.table_data][last_key])
  
+    def flush(self):
+        self._storage = self._schema
 
-    def _setup_storage(self):
+ 
+    def get_storage(self) -> dict:
+        return self._storage
+
+    def _setup_storage(self, schema):
         print("Storage setup")
         # Not the best having things look the same
-        self.storage = type(self).schema
+        self._storage = copy.deepcopy(schema)
 
     def _get_table(self, entity_cls):
-        return self.storage[entity_cls.table_name]
-
+        return self._storage[entity_cls.table_name]
 
 class UrlService:
     def __init__(
             self,
-            store: BaseStore = InMemoryStore.instance(),
+            store: BaseStore = InMemoryStore.instance(URL_SCHEMA),
             hash_strategy: BaseHashGenerator = NaiveHashGenerator
     ):
         self.store = store
@@ -128,19 +149,24 @@ class UrlService:
         return entity
 
     # Simple delegator
-    def get(self, id: str) -> UrlEntity:
-        self.store.get(UrlEntity, id)
+    def get(self, id: str | int) -> UrlEntity:
+        self.store.get(UrlEntity, id=id)
 
 app = FastAPI()
 
 class Url(BaseModel):
     original_url: str
 
+def get_db():
+    return InMemoryStore.instance(URL_SCHEMA)
 
 @app.post("/urls")
-async def create_url(url: Url):
+async def create_url(
+        url: Url,
+        store: BaseStore = Depends(get_db)
+):
     # TODO validate
-    url_entity = UrlService().create(original_url=url.original_url)
+    url_entity = UrlService(store).create(original_url=url.original_url)
 
     # TODO use pydantic model instead
     return vars(url_entity)
@@ -149,11 +175,16 @@ async def create_url(url: Url):
 async def read_root():
     return Response("Hello, it's me. Yet another Url Shortener")
 
-# url_id
 @app.get("/{short_url}")
 async def redirect_url(
-    short_url: str = Path(title="Shorthand for the url", default="")
+        short_url: str = Path(title="Shorthand for the url", default=""),
+        store: BaseStore = Depends(get_db)
 ):
+    # XXX make "str"
+    short_url = int(short_url)
     # TODO validate
-    url_entity = UrlService().get(id=short_url)
-    return RedirectResponse(url_entity.original_url)
+    url_entity = UrlService(store).get(id=short_url)
+
+    if url_entity:
+        return RedirectResponse(url_entity.original_url)
+    return Response(status_code=status.HTTP_404_NOT_FOUND)
