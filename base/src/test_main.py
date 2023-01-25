@@ -19,7 +19,6 @@ class TestInMemoryStore:
     def store(self):
         return InMemoryStore(URL_SCHEMA)
 
-
     class TestAdd:
         def test_add_should_insert_a_record_properly(self, store):
             store.add(UrlEntity(id=1, original_url="some"))
@@ -61,7 +60,7 @@ class TestInMemoryStore:
     def test_flush_clears_the_store(self, store):
         # Given
         store.add(UrlEntity(id=1, original_url="some"))
-        
+
         # When
         store.flush()
 
@@ -90,13 +89,23 @@ class TestUrlApi:
         store = InMemoryStore.instance(URL_SCHEMA)
         store.add(UrlEntity(id="1", original_url="https://some.com"))
 
-    def test_create_url(self):
-        response = client.post(
-            '/urls',
-            json={"original_url": "some.com"}
-        )
+    class TestUrlApi:
+        def test_create_url_returns_a_created_record(self):
+            response = client.post(
+                '/urls',
+                json={"original_url": "http://some.com"}
+            )
 
-        assert response.json() == {"id": "1", "original_url": "some.com"}
+            assert response.json() == {"id": "1", "original_url": "http://some.com"}
+        
+        def test_create_url_error_on_invalid_url(self):
+            response = client.post(
+                '/urls',
+                json={"original_url": "some.com"}
+            )
+
+            assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+            assert response.text == '{"detail":[{"loc":["body","original_url"],"msg":"invalid or missing URL scheme","type":"value_error.url.scheme"}]}'
 
     def test_redirect_url(self, setup_store):
         response = client.get(f"/1", allow_redirects=False)

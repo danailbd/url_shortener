@@ -2,7 +2,7 @@ import copy
 
 from fastapi import Depends, FastAPI, Response, Path, status
 from fastapi.responses import RedirectResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, HttpUrl
 
 # Strategy
 class BaseHashGenerator:
@@ -154,7 +154,7 @@ class UrlService:
 app = FastAPI()
 
 class Url(BaseModel):
-    original_url: str
+    original_url: HttpUrl = Field(title="Url to be shortened")
 
 def get_db():
     return InMemoryStore.instance(URL_SCHEMA)
