@@ -13,6 +13,18 @@ services:
     volumes:
       - .:/app
 
+  auth_service:
+    build: ./auth
+    command: node app.js 
+    ports:
+      - 8001:3000
+#   environment:
+#     - DATABASE_URL=postgres://user:password@db:5432/database
+#   depends_on:
+#     - db
+    volumes:
+      - .:/app
+
   db:
     image: postgres:12
     environment:
