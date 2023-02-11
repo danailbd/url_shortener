@@ -1,7 +1,7 @@
 const {
     AuthService,
     CredentialsValidator,
-    AccessTokenGenerator,
+    JwtAccessTokenGenerator,
     BasicStore,
     UserRepository,
     InvalidCredentials
@@ -55,15 +55,27 @@ describe('#CredentialsValidator', () => {
     });
 });
 
-describe('#AuthService', () => {
+describe('#JwtAccessTokenGenerator', () => {
+    // given data
+    // .  - it should build a token with the data inlined
+    // given different data - it should have different hash
+    const subject = new JwtAccessTokenGenerator();
 
+    const expected_token = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzb21lIjoiZGF0YSJ9.RySw0731yBsf7JlZjdzs9DDlpSKGDVmEhUlxemMTciY='
+
+    it('generates correct token given correct data', () => {
+        // TODO fix with proper string
+        expect(subject.generate({some: 'data'})).toEqual(expected_token)
+    })
+
+    it('generates different token', () => {
+        // TODO fix with proper string
+        expect(subject.generate({some: 'dataa'})).not.toEqual(expected_token)
+    })
+})
+
+describe('#AuthService', () => {
     describe('given an existing user', () => {
         // TODO encrypt the password
     });
 });
-
-describe('#AuthService', () => {
-    // given data
-    // .  - it should build a token with the data inlined
-    // given different data - it should have different hash
-})

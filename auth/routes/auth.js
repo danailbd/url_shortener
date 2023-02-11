@@ -8,7 +8,7 @@ const default_seed = {
 // TODO normal db
 class BasicStore {
     #store
-    constructor(seed=default_seed) {
+    constructor(seed = default_seed) {
         this.#seed(seed);
     }
 
@@ -39,23 +39,45 @@ const userRepo = new UserRepository(store);
 
 class InvalidCredentials extends Error { }
 
+// ----
+const crypto = require('crypto');
+
 // ref: https://jwt.io/
-class AccessTokenGenerator {
-    generate(payload) {
-        // TODO
-        const data = { ...payload };
-        const alg = {
-            typ: 'JWT',
-            alg: 'HS256'
-        }
-        //  HMACSHA256(
-        //     base64UrlEncode(header) + "." +
-        //     base64UrlEncode(payload),
+class JwtAccessTokenGenerator {
+    // TODO Parameterize
+    #alg = 'sha256';
+    #header = {
+        alg: 'HS256',
+        typ: 'JWT'
+    };
+    // TODO move to config
+    #secret = '2O1QovhnZRg0P4BbK6rh05NqvE9LBReHI5MWqrwqV44=';
 
-        //   your-256-bit-secret
 
-        //   )
-        return data
+    // TODO add ttl, and other claims
+    // https://www.rfc-editor.org/rfc/rfc7519#section-4.1
+    // https://www.iana.org/assignments/jwt/jwt.xhtml
+    generate(data, ttl = 1) {
+        const payload = {...data}; // TODO enhance
+        const encoded_payload = this.#encodeField(payload);
+        const encoded_header = this.#encodeField(this.#header);
+
+        const signature = this.#buildSignature(this.#header, payload);
+
+        return `${encoded_header}.${encoded_payload}.${signature}`;
+    }
+
+    #encodeField(obj) {
+        return Buffer
+            .from(JSON.stringify(obj))
+            .toString('base64');
+    }
+
+    #buildSignature(header, payload) {
+        return crypto
+            .createHmac(this.#alg, Buffer.from(this.#secret, 'base64'))
+            .update(`${this.#encodeField(header)}.${this.#encodeField(payload)}`)
+            .digest('base64');
     }
 }
 
@@ -63,7 +85,6 @@ class AccessTokenGenerator {
 //     CredentialsValidator
 //     AuthorizationCodeValidator
 class CredentialsValidator {
-
     #userRepository
 
     constructor(userRepository) {
@@ -86,22 +107,22 @@ class CredentialsValidator {
 class AuthService {
     #userRepository
     #validator
-    #accessTokenGenerator
+    #JwtAccessTokenGenerator
 
     constructor(
         userStore,
         validator = new CredentialsValidator(userStore),
-        accessTokenGenerator = new AccessTokenGenerator()
+        JwtAccessTokenGenerator = new JwtAccessTokenGenerator()
     ) {
         this.#userRepository = userStore;
         this.#validator = validator;
-        this.#accessTokenGenerator = accessTokenGenerator;
+        this.#JwtAccessTokenGenerator = JwtAccessTokenGenerator;
     }
 
     // Throws
     async authenticate(username, password) {
         await this.#validator.validate(username, password);
-        return await this.#accessTokenGenerator.generate(username)
+        return this.#JwtAccessTokenGenerator.generate({ user: username });
     }
 }
 
@@ -126,7 +147,7 @@ module.exports = {
     router,
     AuthService,
     CredentialsValidator,
-    AccessTokenGenerator,
+    JwtAccessTokenGenerator,
     BasicStore,
     UserRepository,
     InvalidCredentials
