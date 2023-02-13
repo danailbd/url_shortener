@@ -8,8 +8,8 @@ URL_SCHEMA = {
             #          <table>_data: {}
             # }
             "urls": {
-                "url_ids": [],
-                "urls_data": {}
+                "url_ids": ['1'],
+                "urls_data": {'1': {"original_url": 'dir.bg'}}
             }
         }
 
