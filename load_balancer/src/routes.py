@@ -39,7 +39,9 @@ class BrokerRequest:
 
 
 class NodeResponse:
-    pass
+    def __init__(self, node_id: int, options: dict):
+        self.worker_id = node_id
+        self.opts = options
 
 # basic pub/sub
 class Emitter:
@@ -90,7 +92,7 @@ class Node(Emitter):
         # TODO move to func/class 
         self.active_requests += 1
 
-        sleep = random.randrange(5, 10 + self.active_requests) 
+        sleep = random.randrange(0, 3 + self.active_requests) 
         # TODO use `print/toString` function
         print(f'Node {self.id} | start | request {request.id} | sleep: {sleep} | active {self.active_requests}')
 
@@ -106,10 +108,15 @@ class Node(Emitter):
             print(f'Node {self.id} finished request {request.id}')
             self.active_requests -= 1
             self.emit(Node.Event.ActiveRequestsChanged)
+
+            return NodeResponse(self.id, {'sleep': sleep})
     
     # TODO
     async def health_check():
         pass
+    
+    def __str__(self):
+        return f'Node {self.id} ( {self.active_requests} )'
 
     # XXX no, Node shouldn't know about priority ; it should be an user's responsibility
     # e.g. NodeWrapper
@@ -137,27 +144,31 @@ class Singleton:
 # NodesLoadBalancer #get_least_busy_node #rebalance
 class NodesLoadTracker(Singleton):
     # Keep a sorted heap
-    _nodes_heap: list[Node]
+    _nodes_pool: list[Node]
 
     def __init__(self, nodes: list[Node] = NODES_LIST):
-        self._nodes_heap = nodes
+        self._nodes_pool = nodes
         self._attach_node_load_listener()
 
     def get_least_busy_node(self) -> Node:
-        return self._nodes_heap[0]
+        return self._nodes_pool[0]
 
     # protected
 
     # TODO speed up - rebalance(node) & move the node up or down in a tree/heap;
     # heapify would be O(n)
     def _rebalance_nodes(self, node) -> None:
-        heapq.heapify(self._nodes_heap)
+        heapq.heapify(self._nodes_pool)
         # XXX
-        print(f'Rebalance - next Node {node.id} | active {node.active_requests}')
+
+        print(f'Rebalance - {" -- ".join(self.pool_stats())}')
+
+    def pool_stats(self):
+        return map(lambda n: str(n), self._nodes_pool)
 
     def _attach_node_load_listener(self) -> None:
         # subscribe
-        for node in self._nodes_heap:
+        for node in self._nodes_pool:
             node.on(Node.Event.ActiveRequestsChanged, self._rebalance_nodes)
 
 
