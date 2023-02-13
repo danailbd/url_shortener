@@ -2,8 +2,12 @@ import heapq
 import asyncio
 import random
 
+import logging
+
 from fastapi import APIRouter, Depends, Response, Request, status
-from pydantic import BaseModel, HttpUrl, Field
+# from pydantic import BaseModel, HttpUrl, Field
+
+logger = logging.getLogger('routes')
 
 
 router = APIRouter()
@@ -19,8 +23,20 @@ router = APIRouter()
 
 # TODO rename
 class BrokerRequest:
+    last_id: int = 0
+
     id: int
-    pass
+    
+    def __init__(self, request):
+        self.request = request
+        # TODO could be generator?
+        self.id = BrokerRequest.next_id()
+
+    @classmethod
+    def next_id(cls):
+        cls.last_id += 1
+        return cls.last_id
+
 
 class NodeResponse:
     pass
@@ -30,10 +46,13 @@ class Emitter:
     class Event:
         pass
 
-    _subscribers: dict[str, list[function]] = {}
+    _subscribers: dict # dict[str, list[Callable]] = {}
+
+    def __init__(self):
+        self._subscribers = {}
 
     def on(self, event, callback):
-        if not self._subscribers[event]:
+        if event not in self._subscribers:
             self._subscribers[event] = []
         self._subscribers[event].append(callback)
     
@@ -60,6 +79,8 @@ class Node(Emitter):
     active_requests: int = 0
 
     def __init__(self, _id, _uri):
+        super().__init__()
+
         self.id = _id
         self.uri = _uri
 
@@ -68,14 +89,21 @@ class Node(Emitter):
         # return await client.send(request)
         # TODO move to func/class 
         self.active_requests += 1
+
+        sleep = random.randrange(5, 10 + self.active_requests) 
+        # TODO use `print/toString` function
+        print(f'Node {self.id} | start | request {request.id} | sleep: {sleep} | active {self.active_requests}')
+
         self.emit(Node.Event.ActiveRequestsChanged)
+        
 
         try:
             # XXX testing only
-            await asyncio.sleep(random.randrange(0, 10 + self.active_requests))
+            await asyncio.sleep(sleep)
         except:
             pass
         finally:
+            print(f'Node {self.id} finished request {request.id}')
             self.active_requests -= 1
             self.emit(Node.Event.ActiveRequestsChanged)
     
@@ -92,9 +120,12 @@ class Node(Emitter):
 NODES_LIST: list[Node] = [
     Node(1, 'localhost:3001'),
     Node(2, 'localhost:3002'),
+    Node(3, 'localhost:3003'),
 ]
 
 class Singleton:
+    __instance = None
+
     @classmethod
     def instance(cls, *args, **kwargs):
         if not cls.__instance:
@@ -113,7 +144,7 @@ class NodesLoadTracker(Singleton):
         self._attach_node_load_listener()
 
     def get_least_busy_node(self) -> Node:
-        self._nodes_heap[0]
+        return self._nodes_heap[0]
 
     # protected
 
@@ -121,11 +152,13 @@ class NodesLoadTracker(Singleton):
     # heapify would be O(n)
     def _rebalance_nodes(self, node) -> None:
         heapq.heapify(self._nodes_heap)
+        # XXX
+        print(f'Rebalance - next Node {node.id} | active {node.active_requests}')
 
     def _attach_node_load_listener(self) -> None:
         # subscribe
         for node in self._nodes_heap:
-            node.on(Node.Events.ActiveRequestsChanged, self._rebalance_nodes)
+            node.on(Node.Event.ActiveRequestsChanged, self._rebalance_nodes)
 
 
 class RequestBroker(Singleton):
@@ -137,9 +170,11 @@ class RequestBroker(Singleton):
         try:
             node = self._nodes_load_tracker.get_least_busy_node()
             resp = await node.process_request(request)
-        except:
+        except Exception as e:
             # NodeProcessError
-            pass # TODO
+            # XXX
+            print(e)
+            # TODO
             return None
         else:
             return resp
@@ -150,19 +185,18 @@ def get_request_broker():
     return RequestBroker.instance()
 
 
-@router.route("/{full_path:path}")
+@router.api_route("/{full_path:path}")
 async def forward_request(
     request: Request,
     full_path: str,
     request_broker: RequestBroker = Depends(get_request_broker)
 ):
     # RequestParallelBroker
-    resp = await request_broker.process_request(request, full_path)
+    # TODO use full_path vs request.scope.path
+    resp = await request_broker.process_request(BrokerRequest(request))
 
     return resp
 
-router.get("/")
-
-
+# @router.get("/")
 async def read_root():
     return Response("Hello, it's me. A simple LoadBalancer")

@@ -2,7 +2,7 @@ uvicorn
 watchfiles
 
 # psycopg2==2.8.6
-fastapi==0.61.1
+fastapi==0.90.1
 
 requests
 httpx
