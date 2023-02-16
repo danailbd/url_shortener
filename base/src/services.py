@@ -11,7 +11,7 @@ class UrlService:
         self.hash_strategy = hash_strategy
 
     def create(self, original_url: str) -> UrlEntity:
-        last: UrlEntity = self.store.last(UrlEntity)
+        last: UrlEntity | None = self.store.last(UrlEntity)
         last_id: str = last.id if last else ''
 
         new_id = self.hash_strategy.generate_hash(original_url, str(last_id))

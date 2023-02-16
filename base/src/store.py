@@ -4,12 +4,12 @@ URL_SCHEMA = {
             # Simulate a table hash index-like behavior. Keep a ids lists
             # so that we can access the last key
             # <table>: {
-            #          <table>_ids: [],
-            #          <table>_data: {}
+            #          <table>_ids: ['1'],
+            #          <table>_data: {'1': {"original_url": 'dir.bg'}
             # }
             "urls": {
-                "url_ids": ['1'],
-                "urls_data": {'1': {"original_url": 'dir.bg'}}
+                "url_ids": [],
+                "urls_data": {}
             }
         }
 
@@ -25,7 +25,6 @@ class BaseEntity:
             if not property in self.__annotations__:
                 raise TypeError(f"Property not defined: {property}")
             setattr(self, property, dict[property])
-
 
 
 class BaseStore:
@@ -84,12 +83,12 @@ class InMemoryStore(BaseStore):
             return None
 
         last_key: int = table[entity_cls.table_keys][-1]
-        return entity_cls(**table[entity_cls.table_data][last_key])
- 
+        return entity_cls(id=last_key, **table[entity_cls.table_data][last_key])
+
     def flush(self):
         self._storage = copy.deepcopy(self._schema)
 
- 
+
     def get_storage(self) -> dict:
         return self._storage
 

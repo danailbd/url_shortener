@@ -1,6 +1,7 @@
-from fastapi import APIRouter, Depends, Response, Path, status, Redirect
+from fastapi import APIRouter, Depends, Response, Path, status
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, HttpUrl, Field
+from typing import Optional
 
 from .store import BaseStore, InMemoryStore, URL_SCHEMA
 from .services import UrlService
@@ -9,7 +10,7 @@ router = APIRouter()
 
 # TODO move elsewhere
 class Url(BaseModel):
-    id: str
+    id: Optional[str] = Field(None)
     original_url: HttpUrl = Field(title="Url to be shortened")
 
 def get_db():
@@ -22,7 +23,8 @@ async def create_url(
 ):
     url_entity = UrlService(store).create(original_url=url.original_url)
 
-    return Url(url_entity)
+
+    return Url(**vars(url_entity))
 
 @router.get("/")
 async def read_root():
@@ -35,10 +37,8 @@ async def redirect_url(
 ):
     url_entity = UrlService(store).get(id=short_url)
 
-    print("HERE---")
-
     if url_entity:
-        return Redirect(
+        return RedirectResponse(
             url_entity.original_url
         )
     return Response(status_code=status.HTTP_404_NOT_FOUND)
