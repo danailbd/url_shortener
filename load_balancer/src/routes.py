@@ -1,4 +1,5 @@
 import heapq
+import httpx
 import asyncio
 import random
 
@@ -9,24 +10,17 @@ from fastapi import APIRouter, Depends, Response, Request, status
 
 logger = logging.getLogger('routes')
 
-
 router = APIRouter()
 
-# Ex. sequence
-# B - i1 --> n1++
-# B - i2 --> n2++
-#  --n2 <-- i2
-# B - i3 --> n2++
-#  --n1 <-- i1
-#  --n2 <-- i3
 
+DISABLE_NODE_REQUESTS = False
 
-# TODO rename
 class BrokerRequest:
     last_id: int = 0
 
     id: int
-    
+    request: Request
+
     def __init__(self, request):
         self.request = request
         # TODO could be generator?
@@ -34,6 +28,7 @@ class BrokerRequest:
 
     @classmethod
     def next_id(cls):
+        # TODO or use uuid
         cls.last_id += 1
         return cls.last_id
 
@@ -92,25 +87,41 @@ class Node(Emitter):
         # TODO move to func/class 
         self.active_requests += 1
 
-        sleep = random.randrange(0, 3 + self.active_requests) 
         # TODO use `print/toString` function
-        print(f'Node {self.id} | start | request {request.id} | sleep: {sleep} | active {self.active_requests}')
+        print(f'Node {self.id} | start | request {request.id} | active {self.active_requests}')
 
         self.emit(Node.Event.ActiveRequestsChanged)
         
 
+        resp = None
+        sleep = 0
         try:
             # XXX testing only
-            await asyncio.sleep(sleep)
-        except:
-            pass
+            if DISABLE_NODE_REQUESTS:
+                sleep = random.randrange(0, 3 + self.active_requests) 
+                await asyncio.sleep(sleep)
+            else:
+                resp = await self.execute_request(request.request)
+        # TODO more specific error: timeout, can't connect
+        except Exception as e:
+            logger.error(f'Node#execute_request|node_id:{self.id}|req_id:{request.id}', e)
+            # TODO NodeResponse error
+            return {'error': e}
         finally:
             print(f'Node {self.id} finished request {request.id}')
             self.active_requests -= 1
             self.emit(Node.Event.ActiveRequestsChanged)
 
-            return NodeResponse(self.id, {'sleep': sleep})
+            return NodeResponse(self.id, resp)# {'sleep': sleep})
     
+    async def execute_request(self, request):
+        async with httpx.AsyncClient() as client:
+            method = request.method
+            url = 'http://' + ''.join([self.uri, request.scope['path']])
+            # TODO add more params
+            return await client.request(method, url)
+
+
     # TODO
     async def health_check():
         pass
@@ -142,6 +153,7 @@ class Singleton:
 # Manages the priority of nodes / balances nodes load
 # ?Follow-ups on node freeze?
 # NodesLoadBalancer #get_least_busy_node #rebalance
+# TODO BalanceStrategy - least connections, round robin
 class NodesLoadTracker(Singleton):
     # Keep a sorted heap
     _nodes_pool: list[Node]
@@ -182,7 +194,7 @@ class RequestBroker(Singleton):
             node = self._nodes_load_tracker.get_least_busy_node()
             resp = await node.process_request(request)
         except Exception as e:
-            # NodeProcessError
+            # TODO route to different worker
             # XXX
             print(e)
             # TODO
@@ -203,7 +215,6 @@ async def forward_request(
     request_broker: RequestBroker = Depends(get_request_broker)
 ):
     # RequestParallelBroker
-    # TODO use full_path vs request.scope.path
     resp = await request_broker.process_request(BrokerRequest(request))
 
     return resp
