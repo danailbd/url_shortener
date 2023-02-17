@@ -15,6 +15,7 @@ router = APIRouter()
 
 DISABLE_NODE_REQUESTS = False
 
+
 class BrokerRequest:
     last_id: int = 0
 
@@ -39,11 +40,13 @@ class NodeResponse:
         self.opts = options
 
 # basic pub/sub
+
+
 class Emitter:
     class Event:
         pass
 
-    _subscribers: dict # dict[str, list[Callable]] = {}
+    _subscribers: dict  # dict[str, list[Callable]] = {}
 
     def __init__(self):
         self._subscribers = {}
@@ -52,7 +55,7 @@ class Emitter:
         if event not in self._subscribers:
             self._subscribers[event] = []
         self._subscribers[event].append(callback)
-    
+
     # rename publish / emit
     def emit(self, event):
         if not self._subscribers[event]:
@@ -67,6 +70,8 @@ class Emitter:
 class NodeTimeout(Exception):
     pass
 
+
+# TODO rename: Worker/WorkerNode/ServiceNode/
 class Node(Emitter):
     class Event:
         ActiveRequestsChanged = 'active_request_changed'
@@ -84,27 +89,28 @@ class Node(Emitter):
     async def process_request(self, request: BrokerRequest) -> NodeResponse:
         # keep internal queue?
         # return await client.send(request)
-        # TODO move to func/class 
+        # TODO move to func/class
         self.active_requests += 1
 
         # TODO use `print/toString` function
-        print(f'Node {self.id} | start | request {request.id} | active {self.active_requests}')
+        print(
+            f'Node {self.id} | start | request {request.id} | active {self.active_requests}')
 
         self.emit(Node.Event.ActiveRequestsChanged)
-        
 
         resp = None
         sleep = 0
         try:
             # XXX testing only
             if DISABLE_NODE_REQUESTS:
-                sleep = random.randrange(0, 3 + self.active_requests) 
+                sleep = random.randrange(0, 3 + self.active_requests)
                 await asyncio.sleep(sleep)
             else:
                 resp = await self.execute_request(request.request)
         # TODO more specific error: timeout, can't connect
         except Exception as e:
-            logger.error(f'Node#execute_request|node_id:{self.id}|req_id:{request.id}', e)
+            logger.error(
+                f'Node#execute_request|node_id:{self.id}|req_id:{request.id}', e)
             # TODO NodeResponse error
             return {'error': e}
         finally:
@@ -112,8 +118,9 @@ class Node(Emitter):
             self.active_requests -= 1
             self.emit(Node.Event.ActiveRequestsChanged)
 
-            return NodeResponse(self.id, resp)# {'sleep': sleep})
-    
+            return NodeResponse(self.id, resp)  # {'sleep': sleep})
+
+    # TODO add variables
     async def execute_request(self, request):
         async with httpx.AsyncClient() as client:
             method = request.method
@@ -121,11 +128,11 @@ class Node(Emitter):
             # TODO add more params
             return await client.request(method, url)
 
-
     # TODO
+
     async def health_check():
         pass
-    
+
     def __str__(self):
         return f'Node {self.id} ( {self.active_requests} )'
 
@@ -134,12 +141,14 @@ class Node(Emitter):
     def __lt__(self, other):
         return self.active_requests < other.active_requests
 
+
 # TODO in config / env vars
 NODES_LIST: list[Node] = [
     Node(1, 'localhost:3001'),
     Node(2, 'localhost:3002'),
     Node(3, 'localhost:3003'),
 ]
+
 
 class Singleton:
     __instance = None
@@ -154,6 +163,8 @@ class Singleton:
 # ?Follow-ups on node freeze?
 # NodesLoadBalancer #get_least_busy_node #rebalance
 # TODO BalanceStrategy - least connections, round robin
+
+
 class NodesLoadTracker(Singleton):
     # Keep a sorted heap
     _nodes_pool: list[Node]
@@ -203,12 +214,11 @@ class RequestBroker(Singleton):
             return resp
 
 
-
 def get_request_broker():
     return RequestBroker.instance()
 
 
-@router.api_route("/{full_path:path}")
+@router.api_route("/{full_path:path}", methods=['GET', 'POST'])
 async def forward_request(
     request: Request,
     full_path: str,
@@ -217,8 +227,11 @@ async def forward_request(
     # RequestParallelBroker
     resp = await request_broker.process_request(BrokerRequest(request))
 
-    return resp
+    return Response(content=resp.opts.content,
+                    headers=resp.opts.headers,
+                    status_code=resp.opts.status_code)
 
-# @router.get("/")
+
+
 async def read_root():
     return Response("Hello, it's me. A simple LoadBalancer")
