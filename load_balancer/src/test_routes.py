@@ -6,7 +6,6 @@ from fastapi.testclient import TestClient
 from httpx import Response
 
 from .routes import RequestBroker, NodesLoadTracker, Node, NodeResponse
-from ..main import app
 
 class MockNode(Node):
     async def process_request(self, request):
@@ -14,14 +13,19 @@ class MockNode(Node):
 
 
 # --- conftest.py
-from typing import Any
-from typing import Generator
+from typing import Any, Generator
 from fastapi import FastAPI
-
-from .routes import get_request_broker
+from .routes import router, get_request_broker
 
 @pytest.fixture #(scope="function")
-def client() -> Generator[TestClient, Any, None]:
+def app() -> Generator[FastAPI]:
+    app = FastAPI()
+    app.include_router(router)
+    yield app
+
+
+@pytest.fixture #(scope="function")
+def client(app: FastAPI) -> Generator[TestClient, Any, None]:
     """
     """
 
