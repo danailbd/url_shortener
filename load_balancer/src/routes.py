@@ -233,5 +233,6 @@ async def forward_request(
 
 
 
+@router.get('/')
 async def read_root():
     return Response("Hello, it's me. A simple LoadBalancer")
