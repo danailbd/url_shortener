@@ -236,10 +236,10 @@ class MetricBasedWorkerPool(BalancedWorkerPool):
 
     # TODO speed up - rebalance(worker) & move the worker up or down in a tree/heap;
     # heapify would be O(n)
-    def _rebalance_workers(self, worker) -> None:
+    def _rebalance_workers(self, worker=None) -> None:
         heapq.heapify(self._worker_pool)
 
-        logger.info(f'Rebalance - {" -- ".join(self.pool_stats())}')
+        logger.info(f'Rebalance {worker.id if worker else ""} - {" -- ".join(self.pool_stats())}')
 
     def set_comparator(self, comparator):
         # TODO rework ; Workaround to use the `heapq.heapify` out of the box
@@ -260,7 +260,7 @@ class MetricBasedWorkerPool(BalancedWorkerPool):
 
 class BalanceStrategy:
     ROUND_ROBIN = 'round_robin'
-    # LEAST_ACTIVE_REQUESTS
+    LEAST_ACTIVE_REQUESTS = 'least_active_requests'
 
 # TODO like ExecutorService - java
 worker_config = [{'id': 1, 'uri': 'localhost:3001'}]
@@ -273,13 +273,14 @@ class LoadBalancer(Singleton):
 
     def _build_pool(self, strategy):
         pool_cls = None
+        # TODO simplify factory
         if strategy == BalanceStrategy.ROUND_ROBIN:
-            pool_cls = RoundRobinWorkerPool
-        else:
-            pool_cls = MetricBasedWorkerPool
-        
-        # TODO add config (worker config)
-        self.worker_pool = pool_cls()
+            pool = RoundRobinWorkerPool()
+        elif strategy == BalanceStrategy.LEAST_ACTIVE_REQUESTS:
+            pool = MetricBasedWorkerPool()
+            pool.set_comparator(WorkerComparators.ACTIVE_REQUESTS_COMPARATOR)
+
+        self.worker_pool = pool
 
     # TODO keep some requests queue/list/set/tree?
     async def process_request(self, request: BrokerRequest) -> Response:
@@ -299,8 +300,8 @@ class LoadBalancer(Singleton):
 
 
 def get_load_balancer():
-    balancer = LoadBalancer.instance()
-    return balancer
+    # TODO split in two? create balancer (singleton) ; balancer.set_strategy()
+    return LoadBalancer.instance(balance_strategy=BalanceStrategy.LEAST_ACTIVE_REQUESTS)
 
 
 @router.api_route("/{full_path:path}", methods=['GET', 'POST'])
