@@ -47,7 +47,6 @@ class TestApi:
             assert response.status_code == status.HTTP_200_OK
 
 
-
 # Ex. sequence
 # B - i1 --> n1++
 # B - i2 --> n2++

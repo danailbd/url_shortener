@@ -5,15 +5,17 @@ import random
 
 import logging
 
+from typing import Literal
 from fastapi import APIRouter, Depends, Response, Request, status
 # from pydantic import BaseModel, HttpUrl, Field
 
 logger = logging.getLogger('routes')
+logging.basicConfig(format="%(threadName)s:%(levelname)s:%(message)s", level=logging.DEBUG)
 
 router = APIRouter()
 
 
-DISABLE_NODE_REQUESTS = False
+DISABLE_WORKER_REQUESTS = True
 
 
 class BrokerRequest:
@@ -34,10 +36,10 @@ class BrokerRequest:
         return cls.last_id
 
 
-class NodeResponse:
-    def __init__(self, node_id: int, options: dict):
-        self.worker_id = node_id
-        self.opts = options
+class WorkerResponse:
+    def __init__(self, worker_id: int, options: dict):
+        self.worker_id = worker_id
+        self.response = options
 
 # basic pub/sub
 
@@ -58,23 +60,32 @@ class Emitter:
 
     # rename publish / emit
     def emit(self, event):
-        if not self._subscribers[event]:
+        # TODO asyncio.create_task (make async)
+        if event not in self._subscribers:
             return
 
         for sub_callback in self._subscribers[event]:
-            # notify with Node
+            # notify with Worker
             sub_callback(self)
 
+class Comparable:
+    _comparator: callable
 
-# TODO use
-class NodeTimeout(Exception):
+    def set_comparator(self, comparator: callable):
+        self._comparator = comparator
+
+    def __lt__(self, other):
+        return self._comparator(self, other)
+
+# XXX use
+class WorkerTimeout(Exception):
     pass
 
 
-# TODO rename: Worker/WorkerNode/ServiceNode/
-class Node(Emitter):
+# TODO rename: Worker/WorkerWorker/ServiceWorker/
+class Worker(Emitter, Comparable):
     class Event:
-        ActiveRequestsChanged = 'active_request_changed'
+        StateChanged = 'state_changed'
 
     id: int
     uri: str
@@ -86,67 +97,74 @@ class Node(Emitter):
         self.id = _id
         self.uri = _uri
 
-    async def process_request(self, request: BrokerRequest) -> NodeResponse:
-        # keep internal queue?
-        # return await client.send(request)
-        # TODO move to func/class
+    def increase_active_requests(self):
         self.active_requests += 1
+        # TODO asyncio.create_task
+        self.emit(Worker.Event.StateChanged)
 
-        # TODO use `print/toString` function
-        print(
-            f'Node {self.id} | start | request {request.id} | active {self.active_requests}')
+    def decrease_active_requests(self):
+        self.active_requests -= 1
+        # TODO asyncio.create_task
+        # TODO decorate?
+        self.emit(Worker.Event.StateChanged)
 
-        self.emit(Node.Event.ActiveRequestsChanged)
+    async def process_request(self, request: BrokerRequest) -> WorkerResponse:
+        self.increase_active_requests()
 
-        resp = None
-        sleep = 0
+        logger.info(f'Worker {self.id} | start | request {request.id} | active {self.active_requests}')
+
+        resp: Response = None
         try:
-            # XXX testing only
-            if DISABLE_NODE_REQUESTS:
-                sleep = random.randrange(0, 3 + self.active_requests)
-                await asyncio.sleep(sleep)
-            else:
-                resp = await self.execute_request(request.request)
+            resp = await self.execute_request(request.request)
         # TODO more specific error: timeout, can't connect
         except Exception as e:
             logger.error(
-                f'Node#execute_request|node_id:{self.id}|req_id:{request.id}', e)
-            # TODO NodeResponse error
-            return {'error': e}
-        finally:
-            print(f'Node {self.id} finished request {request.id}')
-            self.active_requests -= 1
-            self.emit(Node.Event.ActiveRequestsChanged)
+                f'Worker#execute_request|worker_id:{self.id}|req_id:{request.id}|Error: {e}')
 
-            return NodeResponse(self.id, resp)  # {'sleep': sleep})
+            # TODO - "Anti corruption": translate to internal exception
+            raise e
+        else:
+            logger.info(f'Worker {self.id} | end | request {request.id} | ET {resp.headers.get("x-process-time")} | active {self.active_requests}')
+
+            # TODO update_metrics(request) | 
+            # if req => +1 active
+            # else => -1 active ; add process time ; ...
+            self.decrease_active_requests()
+
+            return WorkerResponse(self.id, resp)
 
     # TODO add variables
     async def execute_request(self, request):
-        async with httpx.AsyncClient() as client:
-            method = request.method
-            url = 'http://' + ''.join([self.uri, request.scope['path']])
-            # TODO add more params
-            return await client.request(method, url)
-
-    # TODO
+        # XXX testing only
+        if DISABLE_WORKER_REQUESTS:
+            # TODO return as response with "execution time"
+            sleep = random.randrange(0, 3 + self.active_requests)
+            await asyncio.sleep(sleep)
+            return httpx.Response(status_code=200, headers={'X-Process-Time': str(sleep)})
+        else:
+            async with httpx.AsyncClient() as client:
+                method = request.method
+                url = 'http://' + ''.join([self.uri, request.scope['path']])
+                # TODO add more params
+                return await client.request(method, url)
 
     async def health_check():
         pass
 
     def __str__(self):
-        return f'Node {self.id} ( {self.active_requests} )'
+        return f'Worker {self.id} ( {self.active_requests} )'
 
-    # XXX no, Node shouldn't know about priority ; it should be an user's responsibility
-    # e.g. NodeWrapper
+    # XXX no, Worker shouldn't know about priority ; it should be an user's responsibility
+    # e.g. WorkerWrapper
     def __lt__(self, other):
         return self.active_requests < other.active_requests
 
 
 # TODO in config / env vars
-NODES_LIST: list[Node] = [
-    Node(1, 'localhost:3001'),
-    Node(2, 'localhost:3002'),
-    Node(3, 'localhost:3003'),
+WORKERS_LIST: list[Worker] = [
+    Worker(1, 'localhost:3001'),
+    Worker(2, 'localhost:3002'),
+    Worker(3, 'localhost:3003'),
 ]
 
 
@@ -159,77 +177,144 @@ class Singleton:
             cls.__instance = cls(*args, **kwargs)
         return cls.__instance
 
-# Manages the priority of nodes / balances nodes load
-# ?Follow-ups on node freeze?
-# NodesLoadBalancer #get_least_busy_node #rebalance
+# Manages the priority of workers / balances workers load
+# ?Follow-ups on worker freeze?
+# WorkersLoadBalancer #get_worker #rebalance
 # TODO BalanceStrategy - least connections, round robin
 
 
-class NodesLoadTracker(Singleton):
+class BalancedWorkerPool(Singleton):
     # Keep a sorted heap
-    _nodes_pool: list[Node]
+    _worker_pool: list[Worker]
 
-    def __init__(self, nodes: list[Node] = NODES_LIST):
-        self._nodes_pool = nodes
-        self._attach_node_load_listener()
+    def __init__(self, workers: list[Worker] = WORKERS_LIST):
+        self._worker_pool = workers
+        # TODO make sense
+        self._setup_pool()
 
-    def get_least_busy_node(self) -> Node:
-        return self._nodes_pool[0]
+    async def process_request(self, request) -> WorkerResponse:
+        worker = self.get_worker()
+        return await worker.process_request(request)
+
+    def get_worker(self) -> Worker:
+        pass
+
+    def pool_stats(self):
+        return map(lambda n: str(n), self._worker_pool)
 
     # protected
 
-    # TODO speed up - rebalance(node) & move the node up or down in a tree/heap;
+    def _setup_pool(self):
+        pass
+
+    def _worker_pool(self):
+        return self._worker_pool
+
+from abc import ABC, abstractmethod
+
+
+# Factory?
+class RoundRobinWorkerPool(BalancedWorkerPool):
+    current_worker_idx: int = 0
+
+    def get_worker(self):
+        self.current_worker_idx = (self.current_worker_idx + 1) % len(self._worker_pool)
+        return self._worker_pool[self.current_worker_idx]
+
+
+class WorkerComparators:
+    ACTIVE_REQUESTS_COMPARATOR = lambda self, other : self.active_requests < other.active_requests
+
+# Uses different comparators: ActiveRequestWorkerPool; RequestElapseTimeWorkerPool
+class MetricBasedWorkerPool(BalancedWorkerPool):
+    def __init__(self):
+        super().__init__()
+        self._attach_worker_load_listener()
+
+    def get_worker(self):
+        return self._worker_pool[0]
+
+    # TODO speed up - rebalance(worker) & move the worker up or down in a tree/heap;
     # heapify would be O(n)
-    def _rebalance_nodes(self, node) -> None:
-        heapq.heapify(self._nodes_pool)
-        # XXX
+    def _rebalance_workers(self, worker) -> None:
+        heapq.heapify(self._worker_pool)
 
-        print(f'Rebalance - {" -- ".join(self.pool_stats())}')
+        logger.info(f'Rebalance - {" -- ".join(self.pool_stats())}')
 
-    def pool_stats(self):
-        return map(lambda n: str(n), self._nodes_pool)
+    def set_comparator(self, comparator):
+        # TODO rework ; Workaround to use the `heapq.heapify` out of the box
+        for worker in self._worker_pool:
+            worker.set_comparator(comparator)
 
-    def _attach_node_load_listener(self) -> None:
+
+    def _setup_pool(self):
+        # TODO Decorate objects
+        # - Attach health watch listeners
+        # - Enhance workers - comparator
+        self._rebalance_workers()
+
+    def _attach_worker_load_listener(self) -> None:
         # subscribe
-        for node in self._nodes_pool:
-            node.on(Node.Event.ActiveRequestsChanged, self._rebalance_nodes)
+        for worker in self._worker_pool:
+            worker.on(Worker.Event.StateChanged, self._rebalance_workers)
 
+class BalanceStrategy:
+    ROUND_ROBIN = 'round_robin'
+    # LEAST_ACTIVE_REQUESTS
 
-class RequestBroker(Singleton):
-    def __init__(self, nodes_load_tracker: NodesLoadTracker = NodesLoadTracker.instance()):
-        self._nodes_load_tracker = nodes_load_tracker
+# TODO like ExecutorService - java
+worker_config = [{'id': 1, 'uri': 'localhost:3001'}]
+class LoadBalancer(Singleton):
+    # TODO pass worker pool directly?
+    def __init__(self, balance_strategy = BalanceStrategy.ROUND_ROBIN):
+        # TODO should loadbalancer know about config?
+        # self.worker_pool = BalancedWorkerPool(worker_config)
+        self._build_pool(balance_strategy)
+
+    def _build_pool(self, strategy):
+        pool_cls = None
+        if strategy == BalanceStrategy.ROUND_ROBIN:
+            pool_cls = RoundRobinWorkerPool
+        else:
+            pool_cls = MetricBasedWorkerPool
+        
+        # TODO add config (worker config)
+        self.worker_pool = pool_cls()
 
     # TODO keep some requests queue/list/set/tree?
     async def process_request(self, request: BrokerRequest) -> Response:
         try:
-            node = self._nodes_load_tracker.get_least_busy_node()
-            resp = await node.process_request(request)
+            resp = await self.worker_pool.process_request(request)
         except Exception as e:
+            # - quarantine
+            # - reset metrics
             # TODO route to different worker
             # XXX
-            print(e)
+            # logger.error(e)
+            raise e
             # TODO
             return None
         else:
             return resp
 
 
-def get_request_broker():
-    return RequestBroker.instance()
+def get_load_balancer():
+    balancer = LoadBalancer.instance()
+    return balancer
 
 
 @router.api_route("/{full_path:path}", methods=['GET', 'POST'])
 async def forward_request(
     request: Request,
     full_path: str,
-    request_broker: RequestBroker = Depends(get_request_broker)
+    load_balancer: LoadBalancer = Depends(get_load_balancer)
 ):
     # RequestParallelBroker
-    resp = await request_broker.process_request(BrokerRequest(request))
+    resp: WorkerResponse | None = await load_balancer.process_request(BrokerRequest(request))
 
-    return Response(content=resp.opts.content,
-                    headers=resp.opts.headers,
-                    status_code=resp.opts.status_code)
+    return Response(content=resp.response.content,
+                    headers=resp.response.headers,
+                    status_code=resp.response.status_code)
 
 
 
