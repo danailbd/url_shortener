@@ -140,7 +140,7 @@ class Worker(Emitter, Comparable):
             # TODO return as response with "execution time"
             sleep = random.randrange(0, 3 + self.active_requests)
             await asyncio.sleep(sleep)
-            return httpx.Response(status_code=200, headers={'X-Process-Time': str(sleep)})
+            return httpx.Response(status_code=200, headers={'X-Process-Time': str(sleep), 'X-Worker-Id': str(self.id)})
         else:
             async with httpx.AsyncClient() as client:
                 method = request.method
