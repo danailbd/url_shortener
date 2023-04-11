@@ -1,4 +1,6 @@
-FROM python:3.8
+FROM python:3.10-alpine
+
+LABEL desc="Create/Read short urls"
 
 # TODO
 WORKDIR /app

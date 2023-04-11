@@ -138,7 +138,8 @@ class Worker(Emitter, Comparable):
         # XXX testing only
         if DISABLE_WORKER_REQUESTS:
             # TODO return as response with "execution time"
-            sleep = random.randrange(0, 3 + self.active_requests)
+            request_sleep = request.headers.get('x-fake-processing-time')
+            sleep = int(request_sleep) if request_sleep else random.randrange(0, 3 + self.active_requests)
             await asyncio.sleep(sleep)
             return httpx.Response(status_code=200, headers={'X-Process-Time': str(sleep), 'X-Worker-Id': str(self.id)})
         else:
@@ -213,7 +214,7 @@ class BalancedWorkerPool(Singleton):
 from abc import ABC, abstractmethod
 
 
-# Factory?
+# TODO Factory?
 class RoundRobinWorkerPool(BalancedWorkerPool):
     current_worker_idx: int = 0
 
@@ -301,6 +302,7 @@ class LoadBalancer(Singleton):
 
 def get_load_balancer():
     # TODO split in two? create balancer (singleton) ; balancer.set_strategy()
+    # return LoadBalancer.instance(balance_strategy=BalanceStrategy.ROUND_ROBIN)#balance_strategy=BalanceStrategy.LEAST_ACTIVE_REQUESTS)
     return LoadBalancer.instance(balance_strategy=BalanceStrategy.LEAST_ACTIVE_REQUESTS)
 
 
@@ -316,8 +318,6 @@ async def forward_request(
     return Response(content=resp.response.content,
                     headers=resp.response.headers,
                     status_code=resp.response.status_code)
-
-
 
 @router.get('/')
 async def read_root():
